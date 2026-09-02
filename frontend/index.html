@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>frontend</title>
+    <script>
+      // Applied as early as possible (before any CSS/paint) so the page
+      // never flashes the wrong theme. Mirrors the resolution rules in
+      // hooks/ThemeContext.jsx -- keep the two in sync if either changes.
+      (function () {
+        function roleForPath(pathname) {
+          if (pathname.indexOf("/restaurant") === 0) return "restaurant";
+          if (pathname.indexOf("/admin") === 0) return "admin";
+          return "customer";
+        }
+        function readMode(role) {
+          try {
+            var v = window.localStorage.getItem("themeMode:" + role);
+            if (v === "light" || v === "dark" || v === "system" || v === "schedule") return v;
+          } catch (e) { /* ignore */ }
+          return null;
+        }
+        function readSchedule(role) {
+          try {
+            var raw = window.localStorage.getItem("themeSchedule:" + role);
+            if (raw) {
+              var parsed = JSON.parse(raw);
+              if (
+                Number.isInteger(parsed.start) && parsed.start >= 0 && parsed.start <= 23 &&
+                Number.isInteger(parsed.end) && parsed.end >= 0 && parsed.end <= 23
+              ) return parsed;
+            }
+          } catch (e) { /* ignore */ }
+          return { start: 20, end: 6 };
+        }
+        function withinSchedule(hours) {
+          var h = new Date().getHours();
+          if (hours.start === hours.end) return false;
+          if (hours.start < hours.end) return h >= hours.start && h < hours.end;
+          return h >= hours.start || h < hours.end;
+        }
+        try {
+          var role = roleForPath(window.location.pathname);
+          // No stored preference yet -- default to the time-of-day schedule
+          // (8pm-6am dark) so a first-time visitor gets Dark Mode after
+          // sunset without needing to find the toggle first.
+          var mode = readMode(role) || "schedule";
+          var resolved;
+          if (mode === "dark") resolved = "dark";
+          else if (mode === "light") resolved = "light";
+          else if (mode === "system") {
+            resolved = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          } else {
+            resolved = withinSchedule(readSchedule(role)) ? "dark" : "light";
+          }
+          document.documentElement.setAttribute("data-theme", resolved);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
