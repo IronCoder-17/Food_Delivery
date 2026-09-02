@@ -1,0 +1,452 @@
+/* ==========================================================================
+   Theme system
+   --------------------------------------------------------------------------
+   All colors are defined as CSS variables under :root (Light -- the app's
+   original/default look) and :root[data-theme="dark"] (Dark). Components
+   should always consume the variables below rather than hard-coded colors,
+   so switching data-theme on <html> re-themes the whole application.
+   ========================================================================== */
+
+:root {
+  /* Brand (kept mostly constant across themes -- see dark overrides below
+     for the few brand-derived tints that need to change for contrast) */
+  --orange: #E4602A;
+  --orange-dark: #C24A1B;
+  --orange-light: #FFF1E8;
+
+  /* Core surface / text tokens -- these are the ones that flip per theme */
+  --white: #FFFFFF;       /* "surface" -- cards, inputs, popovers, pills */
+  --gray-50: #FAFAF9;     /* page background */
+  --gray-100: #F2F0ED;    /* subtle surface / hover / divider */
+  --gray-300: #D8D3CC;    /* borders */
+  --gray-500: #8B8478;    /* secondary text */
+  --gray-700: #4A443C;    /* label text */
+  --ink: #241F1A;         /* primary text */
+
+  --green: #2E7D32;
+  --red: #C62828;
+  --amber: #B7791F;
+
+  --radius: 10px;
+  --shadow: 0 2px 10px rgba(36, 31, 26, 0.08);
+  --shadow-lg: 0 8px 28px rgba(36, 31, 26, 0.14);
+
+  /* Semantic aliases built from the tokens above -- components can use
+     whichever reads more clearly in context; both stay in sync. */
+  --bg-primary: var(--gray-50);
+  --bg-secondary: var(--gray-100);
+  --card-bg: var(--white);
+  --navbar-bg: var(--white);
+  --modal-bg: var(--white);
+  --table-bg: var(--white);
+  --table-header-bg: var(--gray-100);
+  --text-primary: var(--ink);
+  --text-secondary: var(--gray-500);
+  --border-color: var(--gray-300);
+  --input-bg: var(--white);
+  --input-text: var(--ink);
+  --input-placeholder: var(--gray-500);
+  --hover-bg: var(--gray-100);
+  --overlay-bg: rgba(20, 17, 13, 0.5);
+  --success: var(--green);
+  --warning: var(--amber);
+  --error: var(--red);
+  --primary: var(--orange);
+
+  /* Soft tinted backgrounds used for inline success/warning/error feedback
+     (badges, alerts, quiz-style right/wrong answers, chat error bubbles) */
+  --success-bg-soft: #E8F5E9;
+  --success-text-soft: #1B5E20;
+  --warning-bg-soft: #FFF3CD;
+  --warning-text-soft: #8A6D00;
+  --error-bg-soft: #FDECEA;
+  --error-text-soft: #8B1A1A;
+
+  /* Fixed tokens that never change with the theme -- used for the few
+     spots (sidebar, footer, admin-login panel) that are deliberately
+     always-dark by the original design, plus what needs to stay legible
+     inside them regardless of the site-wide theme. */
+  --ink-static: #241F1A;
+  --surface-fixed-light: #FFFFFF;
+  --text-fixed-dark: #1A1A1A;
+
+  --scrollbar-thumb: var(--gray-300);
+  --scrollbar-track: var(--gray-50);
+
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --white: #1E293B;
+  --gray-50: #0F172A;
+  --gray-100: #1A2436;
+  --gray-300: #334155;
+  --gray-500: #94A3B8;
+  --gray-700: #CBD5E1;
+  --ink: #F1F5F9;
+
+  --green: #4CAF50;
+  --red: #EF5350;
+  --amber: #F5A623;
+
+  --orange-light: #2A1E17;
+
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.55);
+
+  --overlay-bg: rgba(0, 0, 0, 0.65);
+
+  --success-bg-soft: rgba(76, 175, 80, 0.16);
+  --success-text-soft: #81C784;
+  --warning-bg-soft: rgba(245, 166, 35, 0.16);
+  --warning-text-soft: #FFCA7A;
+  --error-bg-soft: rgba(239, 83, 80, 0.18);
+  --error-text-soft: #EF9A9A;
+
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: var(--gray-50);
+  color: var(--ink);
+  font-family: "Times New Roman", Times, serif;
+}
+
+body { font-size: 16px; line-height: 1.5; }
+
+/* Smooth, subtle theme transition (section 8) -- scoped to color-related
+   properties only so it never fights layout, transform, or keyframe
+   animations (spinner, skeleton shimmer, etc.) already used in the app. */
+*, *::before, *::after {
+  transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Times New Roman", Times, serif;
+  font-weight: 700;
+  margin: 0 0 0.5em 0;
+  letter-spacing: 0.2px;
+}
+
+a { color: var(--orange-dark); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button, input, select, textarea {
+  font-family: "Times New Roman", Times, serif;
+}
+
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 3px solid var(--orange);
+  outline-offset: 2px;
+}
+
+.container {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  border-radius: var(--radius);
+  padding: 11px 20px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.15s ease, background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.btn:active { transform: translateY(1px); }
+.btn-primary { background: var(--orange); color: #fff; }
+.btn-primary:hover { background: var(--orange-dark); }
+.btn-outline { background: var(--white); color: var(--orange-dark); border: 1.5px solid var(--orange); }
+.btn-outline:hover { background: var(--orange-light); }
+.btn-ghost { background: transparent; color: var(--gray-700); }
+.btn-ghost:hover { background: var(--gray-100); }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-block { width: 100%; }
+.btn-sm { padding: 7px 14px; font-size: 14px; }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--gray-100);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.input, select.input, textarea.input {
+  width: 100%;
+  padding: 11px 13px;
+  border: 1.5px solid var(--gray-300);
+  border-radius: 8px;
+  font-size: 15px;
+  background: var(--input-bg);
+  color: var(--input-text);
+}
+.input::placeholder { color: var(--input-placeholder); opacity: 1; }
+.input:focus { border-color: var(--orange); outline: none; box-shadow: 0 0 0 3px rgba(228,96,42,0.15); }
+
+.field { margin-bottom: 14px; }
+.field label { display: block; margin-bottom: 6px; font-weight: 700; font-size: 14.5px; color: var(--gray-700); }
+.field .error { color: var(--red); font-size: 13px; margin-top: 4px; }
+.field .hint { color: var(--gray-500); font-size: 13px; margin-top: 4px; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.badge-veg { background: var(--success-bg-soft); color: var(--green); }
+.badge-nonveg { background: var(--error-bg-soft); color: var(--red); }
+.badge-pending { background: var(--warning-bg-soft); color: var(--warning-text-soft); }
+.badge-approved { background: var(--success-bg-soft); color: var(--green); }
+.badge-rejected { background: var(--error-bg-soft); color: var(--red); }
+.badge-orange { background: var(--orange-light); color: var(--orange-dark); }
+
+.alert { padding: 12px 14px; border-radius: 8px; margin-bottom: 14px; font-size: 14.5px; }
+.alert-error { background: var(--error-bg-soft); color: var(--error-text-soft); border: 1px solid var(--red); }
+.alert-success { background: var(--success-bg-soft); color: var(--success-text-soft); border: 1px solid var(--green); }
+.alert-warning { background: var(--warning-bg-soft); color: var(--warning-text-soft); border: 1px solid var(--amber); }
+.alert-info { background: var(--orange-light); color: var(--orange-dark); border: 1px solid var(--orange); }
+
+.grid { display: grid; gap: 18px; }
+.grid-4 { grid-template-columns: repeat(4, 1fr); }
+.grid-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-2 { grid-template-columns: repeat(2, 1fr); }
+
+@media (max-width: 1000px) { .grid-4 { grid-template-columns: repeat(2, 1fr); } .grid-3 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px) { .grid-4, .grid-3, .grid-2 { grid-template-columns: 1fr; } }
+
+.skeleton {
+  background: linear-gradient(90deg, var(--gray-100) 25%, var(--gray-300) 37%, var(--gray-100) 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.4s ease infinite;
+  border-radius: 8px;
+}
+@keyframes shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+
+.spinner {
+  width: 18px; height: 18px;
+  border: 2.5px solid rgba(255,255,255,0.5);
+  border-top-color: var(--white);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--gray-500);
+}
+
+/* ==========================================================================
+   Scrollbars (dark-aware)
+   ========================================================================== */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: var(--gray-500); }
+
+/* ==========================================================================
+   Theme toggle: switch + caret + dropdown menu
+   ========================================================================== */
+.theme-toggle-group {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.theme-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 52px;
+  height: 28px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1.5px solid var(--gray-300);
+  background: linear-gradient(90deg, #BFE3FF 0%, #EAF6FF 100%);
+  cursor: pointer;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: background 0.35s ease, border-color 0.2s ease;
+}
+.theme-toggle:hover { border-color: var(--orange); }
+.theme-toggle:focus-visible { outline: 3px solid var(--orange); outline-offset: 2px; }
+.theme-toggle[aria-checked="true"] {
+  background: linear-gradient(90deg, #0b1220 0%, #1e293b 100%);
+  border-color: var(--gray-700);
+}
+
+/* Tiny stars fade in only once the switch is in the dark position */
+.theme-toggle-sky {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.theme-toggle-star {
+  position: absolute;
+  width: 2.5px;
+  height: 2.5px;
+  border-radius: 50%;
+  background: #fff;
+  opacity: 0;
+  transition: opacity 0.35s ease 0.05s;
+}
+.theme-toggle[aria-checked="true"] .theme-toggle-star { opacity: 0.9; }
+
+.theme-toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: left 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s ease;
+}
+.theme-toggle[aria-checked="true"] .theme-toggle-thumb { left: 29px; background: #1e293b; }
+
+.theme-toggle-thumb-icon {
+  position: absolute;
+  font-size: 11px;
+  line-height: 1;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.theme-toggle-thumb-icon--sun { opacity: 1; transform: rotate(0deg) scale(1); }
+.theme-toggle-thumb-icon--moon { opacity: 0; transform: rotate(-90deg) scale(0.6); }
+.theme-toggle[aria-checked="true"] .theme-toggle-thumb-icon--sun { opacity: 0; transform: rotate(90deg) scale(0.6); }
+.theme-toggle[aria-checked="true"] .theme-toggle-thumb-icon--moon { opacity: 1; transform: rotate(0deg) scale(1); }
+
+.theme-toggle-auto-dot {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--orange);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--white);
+  pointer-events: none;
+}
+
+.theme-toggle-caret {
+  border: 1.5px solid var(--gray-300);
+  background: var(--white);
+  color: var(--gray-500);
+  border-radius: 6px;
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.theme-toggle-caret:hover { border-color: var(--orange); color: var(--orange); }
+.theme-toggle-caret--sidebar { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.25); color: #ccc; }
+.theme-toggle-caret--sidebar:hover { border-color: var(--orange); color: var(--orange); }
+
+.theme-toggle-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 250px;
+  background: var(--white);
+  border: 1px solid var(--gray-300);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  padding: 8px;
+  z-index: 60;
+}
+.theme-toggle-menu--sidebar { right: auto; left: 0; }
+
+.theme-toggle-menu-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--gray-500);
+  padding: 4px 8px 6px;
+}
+
+.theme-toggle-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--ink);
+}
+.theme-toggle-menu-item:hover { background: var(--gray-100); }
+.theme-toggle-menu-item.is-active { background: var(--orange-light); }
+.theme-toggle-menu-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+.theme-toggle-menu-label { display: block; font-weight: 700; font-size: 14px; }
+.theme-toggle-menu-hint { display: block; font-size: 11.5px; color: var(--gray-500); }
+.theme-toggle-menu-check { margin-left: auto; color: var(--orange-dark); font-weight: 700; }
+
+.theme-toggle-schedule {
+  border-top: 1px solid var(--gray-100);
+  margin-top: 6px;
+  padding: 8px 6px 2px;
+}
+.theme-toggle-schedule-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.theme-toggle-schedule-row label { font-size: 13px; color: var(--gray-700); flex-shrink: 0; }
+.theme-toggle-schedule-row select.input { width: auto; padding: 6px 8px; font-size: 13px; }
+
+.theme-toggle-menu-footer {
+  font-size: 10.5px;
+  color: var(--gray-500);
+  text-align: center;
+  padding: 6px 4px 2px;
+  border-top: 1px solid var(--gray-100);
+  margin-top: 4px;
+}
+
+/* Floating variant for auth pages without a navbar/sidebar */
+.theme-toggle-group--floating {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 50;
+}
+@media (max-width: 640px) {
+  .theme-toggle-group--floating { top: 10px; right: 10px; }
+}
