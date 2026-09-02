@@ -1,4 +1,4 @@
-# FoodExpress — Full-Stack Food Delivery Web Application
+# QuickBite — Full-Stack Food Delivery Web Application
 
 A complete food delivery platform with three separate ecosystems — **Customer**, **Restaurant**,
 and **Admin** — built with React (frontend), Python/Flask (backend), and MySQL (database).
