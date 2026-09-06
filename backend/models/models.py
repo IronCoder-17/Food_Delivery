@@ -130,9 +130,17 @@ class PasswordResetToken(db.Model):
     __tablename__ = "password_reset_tokens"
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    token = db.Column(db.String(255), unique=True, nullable=False)
+    # `token` is kept (nullable) only for backward compatibility with any
+    # pre-existing rows created by the old dev-mode implementation, which
+    # stored the raw token here. New rows leave it NULL and store only the
+    # SHA-256 hash below -- the raw token is never persisted, so a database
+    # leak alone can't be used to reset anyone's password.
+    token = db.Column(db.String(255), unique=True, nullable=True)
+    token_hash = db.Column(db.String(64), unique=True, nullable=True, index=True)
     expires_at = db.Column(db.DateTime, nullable=False)
     used = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    requested_ip = db.Column(db.String(64), nullable=True)
 
 
 class Category(db.Model):
