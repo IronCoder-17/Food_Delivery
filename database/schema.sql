@@ -83,7 +83,6 @@ CREATE TABLE addresses (
   state_id INT,
   city_id INT,
   pincode VARCHAR(10),
-  delivery_instruction VARCHAR(20) NOT NULL DEFAULT 'ring_bell',
   is_default TINYINT(1) DEFAULT 0,
   FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
   FOREIGN KEY (state_id) REFERENCES states(id),
@@ -138,9 +137,15 @@ CREATE TABLE otp_verifications (
 CREATE TABLE password_reset_tokens (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_id INT NOT NULL,
-  token VARCHAR(255) NOT NULL UNIQUE,
+  -- Raw token column kept only for backward compatibility with pre-existing
+  -- rows from older deployments; new rows leave this NULL and use
+  -- token_hash instead so the raw token is never persisted.
+  token VARCHAR(255) NULL UNIQUE,
+  token_hash VARCHAR(64) NULL UNIQUE,
   expires_at TIMESTAMP NOT NULL,
   used TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  requested_ip VARCHAR(64) NULL,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -211,7 +216,6 @@ CREATE TABLE orders (
   payment_method ENUM('razorpay','cod','wallet') NOT NULL,
   payment_status ENUM('pending','paid','failed') NOT NULL DEFAULT 'pending',
   order_status ENUM('placed','accepted','preparing','ready','out_for_delivery','delivered','cancelled') NOT NULL DEFAULT 'placed',
-  delivery_instruction VARCHAR(20) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (customer_id) REFERENCES customers(id),
@@ -447,192 +451,3 @@ CREATE TABLE ai_conversation_logs (
 );
 
 SET FOREIGN_KEY_CHECKS = 1;
-
--- ============================================================================
--- Batch 1 Feature Upgrade (see database/migrations/011_batch1_features.sql
--- for the safe ALTER/CREATE-IF-NOT-EXISTS version for an existing database)
--- ============================================================================
-
-CREATE TABLE food_moods (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  name VARCHAR(50) NOT NULL UNIQUE,
-  emoji VARCHAR(10) NOT NULL DEFAULT '🍽️',
-  is_active TINYINT(1) NOT NULL DEFAULT 1
-);
-
-CREATE TABLE food_mood_mapping (
-  food_id INT NOT NULL,
-  mood_id INT NOT NULL,
-  PRIMARY KEY (food_id, mood_id),
-  FOREIGN KEY (food_id) REFERENCES foods(id) ON DELETE CASCADE,
-  FOREIGN KEY (mood_id) REFERENCES food_moods(id) ON DELETE CASCADE,
-  INDEX idx_mood_mapping_mood (mood_id)
-);
-
-CREATE TABLE food_allergens (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  name VARCHAR(50) NOT NULL UNIQUE,
-  is_active TINYINT(1) NOT NULL DEFAULT 1
-);
-
-CREATE TABLE food_allergen_mapping (
-  food_id INT NOT NULL,
-  allergen_id INT NOT NULL,
-  PRIMARY KEY (food_id, allergen_id),
-  FOREIGN KEY (food_id) REFERENCES foods(id) ON DELETE CASCADE,
-  FOREIGN KEY (allergen_id) REFERENCES food_allergens(id) ON DELETE CASCADE,
-  INDEX idx_allergen_mapping_allergen (allergen_id)
-);
-
-CREATE TABLE restaurant_kitchen_status (
-  restaurant_id INT PRIMARY KEY,
-  status VARCHAR(20) NOT NULL DEFAULT 'normal',
-  extra_minutes INT NOT NULL DEFAULT 0,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE
-);
-
-CREATE TABLE chef_specials (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  restaurant_id INT NOT NULL,
-  food_id INT NOT NULL,
-  special_price DECIMAL(10,2) NOT NULL,
-  quantity_total INT NOT NULL,
-  quantity_sold INT NOT NULL DEFAULT 0,
-  start_time DATETIME NOT NULL,
-  end_time DATETIME NOT NULL,
-  description TEXT,
-  image_url VARCHAR(255),
-  is_active TINYINT(1) NOT NULL DEFAULT 1,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE,
-  FOREIGN KEY (food_id) REFERENCES foods(id) ON DELETE CASCADE,
-  INDEX idx_chef_special_restaurant (restaurant_id),
-  INDEX idx_chef_special_window (start_time, end_time)
-);
-
-CREATE TABLE food_streaks (
-  customer_id INT PRIMARY KEY,
-  current_streak INT NOT NULL DEFAULT 0,
-  best_streak INT NOT NULL DEFAULT 0,
-  streak_points INT NOT NULL DEFAULT 0,
-  last_activity_date DATE NULL,
-  last_milestone_awarded INT NOT NULL DEFAULT 0,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
-);
-
-INSERT IGNORE INTO food_moods (name, emoji) VALUES
-  ('Comfort Food', '🍲'), ('Post-Workout', '💪'), ('Light & Healthy', '🥗'),
-  ('Spicy Craving', '🌶️'), ('Sweet Craving', '🍰'), ('Quick Bite', '⚡'),
-  ('Late Night', '🌙'), ('Family Meal', '👨‍👩‍👧‍👦'), ('Budget Friendly', '💰'),
-  ('Energy Boost', '🔋');
-
-INSERT IGNORE INTO food_allergens (name) VALUES
-  ('Vegan'), ('Jain'), ('Nut-free'), ('Dairy-free'), ('Gluten-free'),
-  ('Contains Nuts'), ('Contains Dairy'), ('Contains Gluten'), ('Spicy');
-
--- ============================================================================
--- Batch 2/3 Feature Upgrade (see database/migrations/012_batch2_features.sql
--- for the safe ALTER/CREATE-IF-NOT-EXISTS version for an existing database)
--- ============================================================================
-
-ALTER TABLE group_orders ADD COLUMN enable_voting TINYINT(1) NOT NULL DEFAULT 0;
-ALTER TABLE group_orders ADD COLUMN voting_deadline DATETIME NULL;
-ALTER TABLE group_orders ADD COLUMN max_participants INT NULL;
-ALTER TABLE group_orders ADD COLUMN budget DECIMAL(10,2) NULL;
-
-CREATE TABLE group_order_suggestions (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  group_order_id INT NOT NULL,
-  food_id INT NOT NULL,
-  suggested_by_customer_id INT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (group_order_id) REFERENCES group_orders(id) ON DELETE CASCADE,
-  FOREIGN KEY (food_id) REFERENCES foods(id) ON DELETE CASCADE,
-  FOREIGN KEY (suggested_by_customer_id) REFERENCES customers(id) ON DELETE CASCADE,
-  UNIQUE KEY uq_group_suggestion (group_order_id, food_id),
-  INDEX idx_suggestion_group (group_order_id)
-);
-
-CREATE TABLE group_order_votes (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  suggestion_id INT NOT NULL,
-  customer_id INT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (suggestion_id) REFERENCES group_order_suggestions(id) ON DELETE CASCADE,
-  FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
-  UNIQUE KEY uq_one_vote_per_member (suggestion_id, customer_id)
-);
-
-CREATE TABLE group_order_payments (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  group_order_id INT NOT NULL,
-  customer_id INT NOT NULL,
-  amount DECIMAL(10,2) NOT NULL,
-  split_type VARCHAR(20) NOT NULL,
-  status VARCHAR(20) NOT NULL DEFAULT 'pending',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  paid_at DATETIME NULL,
-  FOREIGN KEY (group_order_id) REFERENCES group_orders(id) ON DELETE CASCADE,
-  FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
-  UNIQUE KEY uq_one_share_per_member (group_order_id, customer_id),
-  INDEX idx_group_payment_group (group_order_id)
-);
-
-CREATE TABLE surplus_deals (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  restaurant_id INT NOT NULL,
-  food_id INT NOT NULL,
-  original_price DECIMAL(10,2) NOT NULL,
-  discount_price DECIMAL(10,2) NOT NULL,
-  quantity_total INT NOT NULL,
-  quantity_sold INT NOT NULL DEFAULT 0,
-  order_deadline DATETIME NOT NULL,
-  expiry_time DATETIME NOT NULL,
-  is_active TINYINT(1) NOT NULL DEFAULT 1,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE,
-  FOREIGN KEY (food_id) REFERENCES foods(id) ON DELETE CASCADE,
-  INDEX idx_surplus_restaurant (restaurant_id),
-  INDEX idx_surplus_window (order_deadline, expiry_time)
-);
-
-CREATE TABLE order_packing_proofs (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  order_id INT NOT NULL UNIQUE,
-  image_path VARCHAR(255) NOT NULL,
-  uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
-);
-
-ALTER TABLE orders ADD COLUMN tip_amount DECIMAL(10,2) NOT NULL DEFAULT 0;
-ALTER TABLE orders ADD COLUMN eco_delivery TINYINT(1) NOT NULL DEFAULT 0;
-ALTER TABLE orders ADD COLUMN donation_amount DECIMAL(10,2) NOT NULL DEFAULT 0;
-
-ALTER TABLE foods ADD COLUMN calories INT NULL;
-ALTER TABLE foods ADD COLUMN protein_grams DECIMAL(6,2) NULL;
-ALTER TABLE foods ADD COLUMN carbs_grams DECIMAL(6,2) NULL;
-ALTER TABLE foods ADD COLUMN fat_grams DECIMAL(6,2) NULL;
-
-CREATE TABLE nutrition_logs (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  customer_id INT NOT NULL,
-  order_id INT NOT NULL,
-  calories INT NOT NULL DEFAULT 0,
-  protein_grams DECIMAL(6,2) NOT NULL DEFAULT 0,
-  carbs_grams DECIMAL(6,2) NOT NULL DEFAULT 0,
-  fat_grams DECIMAL(6,2) NOT NULL DEFAULT 0,
-  logged_date DATE NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
-  FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
-  UNIQUE KEY uq_one_log_per_order (customer_id, order_id),
-  INDEX idx_nutrition_customer_date (customer_id, logged_date)
-);
-
--- If you already have an existing database, run
--- database/migrations/012_batch2_features.sql instead, which uses safe
--- ADD COLUMN IF NOT EXISTS / CREATE TABLE IF NOT EXISTS guards.
--- (For the Batch 1 tables/columns above this section, use
--- database/migrations/011_batch1_features.sql the same way.)
