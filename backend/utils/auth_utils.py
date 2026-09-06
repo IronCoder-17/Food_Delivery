@@ -1,6 +1,9 @@
 import bcrypt
+import hashlib
+import hmac
 import jwt
 import random
+import secrets
 import string
 from datetime import datetime, timedelta
 from flask import current_app
@@ -41,4 +44,23 @@ def generate_otp(length=6) -> str:
 
 
 def generate_reset_token() -> str:
-    return "".join(random.choices(string.ascii_letters + string.digits, k=48))
+    """
+    Cryptographically secure, URL-safe password-reset token. Generated with
+    `secrets` (not `random`), which is unpredictable enough to be safely
+    e-mailed to the customer as a one-time credential.
+    """
+    return secrets.token_urlsafe(32)
+
+
+def hash_reset_token(token: str) -> str:
+    """
+    SHA-256 hash of a reset token, used as the lookup key in the database.
+    Only this hash is ever stored -- the raw token exists only in the
+    email sent to the customer and briefly in memory on the backend, so a
+    database read alone can never be used to reset an account's password.
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def constant_time_compare(a: str, b: str) -> bool:
+    return hmac.compare_digest(a or "", b or "")
