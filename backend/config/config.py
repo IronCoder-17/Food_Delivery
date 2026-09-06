@@ -48,3 +48,36 @@ class Config:
     OTP_DEBUG_MODE = os.environ.get("OTP_DEBUG_MODE", "1") == "1"
     OTP_EXPIRY_MINUTES = 5
     OTP_MAX_ATTEMPTS = 5
+
+    # ---- Password reset email ----
+    # Public frontend origin used to build the reset link e-mailed to the
+    # customer, e.g. http://localhost:5173 in dev or https://app.yoursite.com
+    # in production. Safe to expose -- it's just a URL, not a secret.
+    FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+
+    # EMAIL_ENABLED=0 (default) skips the real SMTP call and just logs what
+    # would have been sent, so the reset flow can be tested end-to-end
+    # without SMTP credentials. Set EMAIL_ENABLED=1 once MAIL_* below are
+    # configured with a real (or Gmail App Password) SMTP account.
+    EMAIL_ENABLED = os.environ.get("EMAIL_ENABLED", "0") == "1"
+
+    # ---- SMTP configuration (backend only -- NEVER read by the frontend) ----
+    # For Gmail: MAIL_HOST=smtp.gmail.com, MAIL_PORT=587, MAIL_USE_TLS=1,
+    # MAIL_USERNAME=you@gmail.com, MAIL_PASSWORD=<16-char App Password>.
+    # A Gmail App Password requires 2-Step Verification to be enabled on the
+    # Google account -- see README.md for full setup steps. Do not use the
+    # normal Gmail account password here.
+    MAIL_HOST = os.environ.get("MAIL_HOST", "")
+    MAIL_PORT = int(os.environ.get("MAIL_PORT", "587") or 587)
+    MAIL_USERNAME = os.environ.get("MAIL_USERNAME", "")
+    MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD", "")
+    MAIL_FROM_EMAIL = os.environ.get("MAIL_FROM_EMAIL", MAIL_USERNAME)
+    MAIL_FROM_NAME = os.environ.get("MAIL_FROM_NAME", "QuickBite")
+    MAIL_USE_TLS = os.environ.get("MAIL_USE_TLS", "1") == "1"
+    MAIL_USE_SSL = os.environ.get("MAIL_USE_SSL", "0") == "1"
+
+    # Minimum seconds a customer must wait before another reset email can be
+    # requested for the *same* email address, enforced on the backend (not
+    # just the frontend) so repeated requests can't spam a real inbox.
+    PASSWORD_RESET_COOLDOWN_SECONDS = int(os.environ.get("PASSWORD_RESET_COOLDOWN_SECONDS", "60"))
+    PASSWORD_RESET_TOKEN_EXPIRY_MINUTES = int(os.environ.get("PASSWORD_RESET_TOKEN_EXPIRY_MINUTES", "30"))
