@@ -12,11 +12,13 @@ from backend.models.models import (
 )
 from backend.utils.auth_utils import (
     hash_password, verify_password, generate_token, generate_reset_token,
+    hash_reset_token, constant_time_compare,
 )
 from backend.utils.validators import is_valid_email, is_valid_mobile, is_valid_password, is_valid_pincode
 from backend.services.otp_service import send_otp, verify_otp
 from backend.services.authority_service import assign_default_authorities
 from backend.services.loyalty_service import get_or_create_loyalty
+from backend.services.email_service import send_password_reset_email
 from backend.services import referral_service
 from backend.services import streak_service
 
@@ -462,52 +464,121 @@ def admin_login():
 # ------------------------------------------------------------------
 # Forgot password (works for any role, via email)
 # ------------------------------------------------------------------
+GENERIC_FORGOT_PASSWORD_RESPONSE = {
+    "message": "If that email is registered, a password reset link has been sent. "
+                "Please check your inbox and spam folder."
+}
+
+
 @auth_bp.route("/forgot-password", methods=["POST"])
 def forgot_password():
     data = request.get_json(force=True) or {}
     email = (data.get("email") or "").strip().lower()
+
+    if not is_valid_email(email):
+        # Still safe to say -- this is a format complaint, not confirmation
+        # that the address is (or isn't) registered.
+        return jsonify({"error": "Please enter a valid email address."}), 400
+
+    # Always return the same generic response whether or not the email is
+    # registered, so the endpoint can't be used to enumerate accounts.
     user = User.query.filter_by(email=email).first()
-
-    # Always return a generic message so we don't leak which emails exist
-    generic = {"message": "If that email is registered, a password reset link has been sent."}
     if not user:
-        return jsonify(generic), 200
+        return jsonify(GENERIC_FORGOT_PASSWORD_RESPONSE), 200
 
-    token = generate_reset_token()
+    # Google-only customers have no password of their own to reset. We still
+    # return the generic response (so this endpoint can't reveal that the
+    # account exists or how it authenticates) but skip issuing a token or
+    # sending anything, leaving Google Sign-In as their only login method.
+    customer = Customer.query.filter_by(user_id=user.id).first()
+    if customer and customer.auth_provider == "google":
+        current_app.logger.info(
+            "Password reset requested for Google-only account user_id=%s -- no email sent.",
+            user.id,
+        )
+        return jsonify(GENERIC_FORGOT_PASSWORD_RESPONSE), 200
+
+    # ---- Backend-enforced cooldown, independent of the frontend ----
+    cooldown_seconds = current_app.config["PASSWORD_RESET_COOLDOWN_SECONDS"]
+    recent_cutoff = datetime.utcnow() - timedelta(seconds=cooldown_seconds)
+    recent_request = (
+        PasswordResetToken.query.filter_by(user_id=user.id)
+        .filter(PasswordResetToken.created_at >= recent_cutoff)
+        .order_by(PasswordResetToken.created_at.desc())
+        .first()
+    )
+    if recent_request:
+        # Don't send another email yet, but still return the same generic
+        # response -- the customer already has a valid link in their inbox.
+        return jsonify(GENERIC_FORGOT_PASSWORD_RESPONSE), 200
+
+    expiry_minutes = current_app.config["PASSWORD_RESET_TOKEN_EXPIRY_MINUTES"]
+    raw_token = generate_reset_token()
     reset = PasswordResetToken(
-        user_id=user.id, token=token,
-        expires_at=datetime.utcnow() + timedelta(minutes=30),
+        user_id=user.id,
+        token_hash=hash_reset_token(raw_token),
+        expires_at=datetime.utcnow() + timedelta(minutes=expiry_minutes),
+        requested_ip=request.remote_addr,
     )
     db.session.add(reset)
     db.session.commit()
 
-    # TODO: email this link via a real mail provider. Returned here only
-    # because no SMTP/email service is configured in this environment.
-    print(f"[DEV RESET LINK] /reset-password?token={token}")
-    resp = dict(generic)
-    if current_app.config["OTP_DEBUG_MODE"]:
-        resp["dev_reset_token"] = token
-    return jsonify(resp), 200
+    reset_url = f"{current_app.config['FRONTEND_URL']}/reset-password?token={raw_token}"
+    customer_name = customer.first_name if customer else ""
+
+    sent, _internal_error = send_password_reset_email(
+        to_email=email,
+        customer_name=customer_name,
+        reset_url=reset_url,
+        expires_minutes=expiry_minutes,
+    )
+    if not sent:
+        # Sending failed -- don't leave a "valid-looking" but never-emailed
+        # token in the database, and don't tell the customer their reset
+        # succeeded when it didn't. The detailed reason was already logged
+        # by email_service; the customer only ever sees a safe generic error.
+        db.session.delete(reset)
+        db.session.commit()
+        return jsonify({"error": "We couldn't send the reset email right now. Please try again shortly."}), 502
+
+    return jsonify(GENERIC_FORGOT_PASSWORD_RESPONSE), 200
 
 
 @auth_bp.route("/reset-password", methods=["POST"])
 def reset_password():
     data = request.get_json(force=True) or {}
-    token = data.get("token")
+    token = data.get("token") or ""
     new_password = data.get("new_password")
     confirm_password = data.get("confirm_password")
 
+    if not token:
+        return jsonify({"error": "Invalid or expired reset token."}), 400
     if new_password != confirm_password:
         return jsonify({"error": "Passwords do not match."}), 400
     ok, msg = is_valid_password(new_password or "")
     if not ok:
         return jsonify({"error": msg}), 400
 
-    reset = PasswordResetToken.query.filter_by(token=token, used=False).first()
+    token_hash = hash_reset_token(token)
+    reset = PasswordResetToken.query.filter_by(token_hash=token_hash, used=False).first()
+
+    # Legacy fallback: a token issued by the old dev-mode flow (pre-migration)
+    # would have been stored raw in `token` with no `token_hash`. Support it
+    # with a constant-time comparison so in-flight links aren't invalidated
+    # by this upgrade, without giving raw-token lookups any timing advantage.
+    if not reset:
+        for candidate in PasswordResetToken.query.filter_by(used=False, token_hash=None).all():
+            if candidate.token and constant_time_compare(candidate.token, token):
+                reset = candidate
+                break
+
     if not reset or reset.expires_at < datetime.utcnow():
         return jsonify({"error": "Invalid or expired reset token."}), 400
 
     user = User.query.get(reset.user_id)
+    if not user:
+        return jsonify({"error": "Invalid or expired reset token."}), 400
+
     user.password_hash = hash_password(new_password)
     reset.used = True
     db.session.commit()
