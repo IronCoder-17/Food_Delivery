@@ -75,11 +75,12 @@ food-delivery-app/
 │       └── hooks/               Auth, Cart, Theme, Authority React contexts
 ├── database/
 │   ├── schema.sql           Full normalized MySQL schema (base tables)
-│   ├── migrations/          12 incremental migrations layering on later features:
+│   ├── migrations/          13 incremental migrations layering on later features:
 │   │                        addresses/favorites/reviews, combos/flash sales/inventory,
 │   │                        meal planner, group ordering, referrals, order tracking,
 │   │                        passes/subscriptions/sponsored listings, order location,
-│   │                        fraud/promotions/disputes, Google OAuth, and two feature batches
+│   │                        fraud/promotions/disputes, Google OAuth, two feature batches,
+│   │                        and hashed password-reset tokens for real email delivery
 │   └── seed.sql              States/cities/categories/GK questions (restaurants/foods/admin are
 │                              seeded via seed_runner.py so passwords are hashed correctly)
 └── README.md                 (this file)
@@ -114,6 +115,9 @@ cp .env.example .env
 #   GOOGLE_CLIENT_ID                          (Google Sign-In)
 #   RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET      (live payments)
 #   AI_API_KEY / AI_MODEL / AI_BASE_URL        (AI assistant & recipe-to-order)
+#   MAIL_HOST / MAIL_PORT / MAIL_USERNAME /
+#   MAIL_PASSWORD / MAIL_FROM_EMAIL / MAIL_FROM_NAME,
+#   FRONTEND_URL, EMAIL_ENABLED=1              (real password-reset emails — see section 7)
 ```
 
 If no `DB_HOST`/`DB_USER` are set, the app falls back to a local SQLite file
@@ -228,9 +232,56 @@ full registration flow without a real SMS provider. **Before going live**, wire 
 (Twilio, MSG91, etc.) into `backend/services/otp_service.py` and set `OTP_DEBUG_MODE=0`.
 
 ### Password reset emails
-Same situation — no SMTP/email service is configured. The reset link is printed to the backend
-console and returned as `dev_reset_token` in debug mode. Wire a real email provider into
-`backend/routes/auth_routes.py` (`forgot_password`) before going live.
+Real email is sent from the backend over SMTP (`backend/services/email_service.py`) — nothing is
+ever sent from React. By default `EMAIL_ENABLED=0`, so the backend logs what it *would* have sent
+instead of making a real SMTP connection, letting you exercise the whole flow without any mail
+credentials. Set `EMAIL_ENABLED=1` and fill in the `MAIL_*` variables below to send real emails.
+
+**Setting up Gmail SMTP (recommended for testing/small deployments):**
+
+1. Turn on **2-Step Verification** on the Google account you want to send from:
+   [myaccount.google.com/security](https://myaccount.google.com/security).
+2. Once 2-Step Verification is on, go to
+   [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) and create an
+   **App Password** (choose "Mail" / "Other", give it a name like "QuickBite backend"). Google
+   gives you a 16-character code — copy it.
+3. In `backend/.env`, set:
+   ```
+   MAIL_HOST=smtp.gmail.com
+   MAIL_PORT=587
+   MAIL_USERNAME=your-email@gmail.com
+   MAIL_PASSWORD=the-16-character-app-password   # NOT your normal Gmail password
+   MAIL_FROM_EMAIL=your-email@gmail.com
+   MAIL_FROM_NAME=QuickBite
+   MAIL_USE_TLS=1
+   MAIL_USE_SSL=0
+   FRONTEND_URL=http://localhost:5173
+   EMAIL_ENABLED=1
+   ```
+4. Never commit `backend/.env`, never put the App Password in `frontend/.env` or any Vite
+   (`VITE_*`) variable, and never push it to GitHub. Only the Flask backend reads `MAIL_PASSWORD`.
+
+Any other SMTP provider (SendGrid, Mailgun, Amazon SES, your company mail server, etc.) works the
+same way — just point `MAIL_HOST` / `MAIL_PORT` at it and use its own username/password.
+
+**Testing the flow end-to-end:**
+1. `python app.py` (backend) and `npm run dev` (frontend).
+2. Go to `/login` → **Forgot password?** → enter a real, registered customer email → **Send Reset
+   Link**.
+3. Check that inbox (and spam folder) for an email from `MAIL_FROM_NAME`.
+4. Click **Reset Password** in the email — it opens `/reset-password?token=...` in the app.
+5. Enter and confirm a new password, submit, and confirm you're redirected to `/login`.
+6. Log in with the new password.
+
+Also worth testing manually: an unregistered email (should get the same generic "if that email is
+registered…" message), submitting the same email twice quickly (second request is silently
+throttled by `PASSWORD_RESET_COOLDOWN_SECONDS`), an expired or already-used token, a Google-only
+customer account (no email is sent — they keep using "Continue with Google"), and turning off wifi
+to confirm SMTP failures return a generic error instead of a stack trace.
+
+Reset tokens are never stored raw — only a SHA-256 hash is kept in `password_reset_tokens.token_hash`
+— are single-use, expire after `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES` (default 30), and are never
+logged or returned by the API once `EMAIL_ENABLED=1`.
 
 ### Google Sign-In
 Set the **same** `GOOGLE_CLIENT_ID` in both `backend/.env` and `frontend/.env`
