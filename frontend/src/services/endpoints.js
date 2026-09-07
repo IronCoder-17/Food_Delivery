@@ -4,6 +4,11 @@ import api from "./api";
 export const sendOtp = (mobile_number) => api.post("/auth/otp/send", { mobile_number });
 export const verifyOtp = (mobile_number, otp_code) => api.post("/auth/otp/verify", { mobile_number, otp_code });
 
+// ---- Email OTP (real email delivery) ----
+export const sendEmailOtp = (email, purpose = "REGISTRATION") => api.post("/auth/send-otp", { email, purpose });
+export const resendEmailOtp = (email, purpose = "REGISTRATION") => api.post("/auth/resend-otp", { email, purpose });
+export const verifyEmailOtp = (email, otp, purpose = "REGISTRATION") => api.post("/auth/verify-otp", { email, otp, purpose });
+
 export const customerRegister = (payload) => api.post("/auth/customer/register", payload);
 export const customerLogin = (email, password) => api.post("/auth/customer/login", { email, password });
 export const customerGoogleLogin = (credential) => api.post("/auth/customer/google", { credential });
