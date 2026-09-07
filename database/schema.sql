@@ -57,6 +57,7 @@ CREATE TABLE customers (
   google_id VARCHAR(255) NULL UNIQUE,
   auth_provider VARCHAR(20) NOT NULL DEFAULT 'local',
   profile_completed TINYINT(1) NOT NULL DEFAULT 1,
+  email_verified TINYINT(1) NOT NULL DEFAULT 1,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (state_id) REFERENCES states(id),
   FOREIGN KEY (city_id) REFERENCES cities(id)
@@ -125,13 +126,23 @@ CREATE TABLE admins (
 -- ------------------------------------------------------------
 CREATE TABLE otp_verifications (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  mobile_number VARCHAR(15) NOT NULL,
-  otp_code VARCHAR(6) NOT NULL,
-  purpose ENUM('registration','password_reset') NOT NULL DEFAULT 'registration',
+  -- Mobile-SMS OTP fields (existing, unchanged behavior) -- nullable so
+  -- email-based rows below don't need a mobile number.
+  mobile_number VARCHAR(15) NULL,
+  otp_code VARCHAR(6) NULL,
+  -- Email OTP fields (new). Only otp_hash is ever stored for these rows --
+  -- the raw 6-digit code exists only in the email sent to the customer and
+  -- briefly in memory on the backend while verifying.
+  email VARCHAR(150) NULL,
+  otp_hash VARCHAR(64) NULL,
+  -- VARCHAR (not ENUM) so new purposes (REGISTRATION, FORGOT_PASSWORD,
+  -- LOGIN, EMAIL_VERIFICATION) can be added without a schema change.
+  purpose VARCHAR(30) NOT NULL DEFAULT 'registration',
   attempts INT NOT NULL DEFAULT 0,
   is_verified TINYINT(1) NOT NULL DEFAULT 0,
   expires_at TIMESTAMP NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX ix_otp_verifications_email (email)
 );
 
 CREATE TABLE password_reset_tokens (
