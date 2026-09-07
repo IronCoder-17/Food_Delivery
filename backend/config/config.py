@@ -41,13 +41,22 @@ class Config:
 
     DELIVERY_FEE = float(os.environ.get("DELIVERY_FEE", "40"))
 
-    # OTP is simulated (no SMS gateway configured). In DEBUG mode the OTP
-    # code is returned in the API response (dev_otp field) so you can test
-    # the flow end-to-end without a real SMS provider. Wire a real provider
-    # (Twilio / MSG91 / etc.) in backend/services/otp_service.py when ready.
+    # Mobile-SMS OTP is still simulated (no SMS gateway configured -- see
+    # backend/services/otp_service.py). In DEBUG mode the OTP code is
+    # returned in the API response (dev_otp field) so the mobile-verification
+    # step can be tested without a real SMS provider. Wire a real provider
+    # (Twilio / MSG91 / etc.) there when ready.
+    #
+    # Email OTP (registration email verification + forgot password) is REAL
+    # -- see backend/services/email_otp_service.py -- and shares these same
+    # expiry/attempt-limit settings.
     OTP_DEBUG_MODE = os.environ.get("OTP_DEBUG_MODE", "1") == "1"
-    OTP_EXPIRY_MINUTES = 5
-    OTP_MAX_ATTEMPTS = 5
+    OTP_EXPIRY_MINUTES = int(os.environ.get("OTP_EXPIRY_MINUTES", "5"))
+    OTP_MAX_ATTEMPTS = int(os.environ.get("OTP_MAX_ATTEMPTS", "5"))
+    # Minimum seconds between OTP (re)send requests for the same email +
+    # purpose, enforced on the backend so a customer (or an attacker) can't
+    # trigger unlimited emails.
+    OTP_RESEND_COOLDOWN = int(os.environ.get("OTP_RESEND_COOLDOWN", "30"))
 
     # ---- Password reset email ----
     # Public frontend origin used to build the reset link e-mailed to the
@@ -81,3 +90,8 @@ class Config:
     # just the frontend) so repeated requests can't spam a real inbox.
     PASSWORD_RESET_COOLDOWN_SECONDS = int(os.environ.get("PASSWORD_RESET_COOLDOWN_SECONDS", "60"))
     PASSWORD_RESET_TOKEN_EXPIRY_MINUTES = int(os.environ.get("PASSWORD_RESET_TOKEN_EXPIRY_MINUTES", "30"))
+    # Short-lived authorization token issued immediately after a customer
+    # verifies their forgot-password OTP -- used once, right away, to submit
+    # the new password. Deliberately shorter than the old link-based expiry
+    # above since the customer is already mid-flow when it's issued.
+    OTP_RESET_TOKEN_EXPIRY_MINUTES = int(os.environ.get("OTP_RESET_TOKEN_EXPIRY_MINUTES", "10"))
