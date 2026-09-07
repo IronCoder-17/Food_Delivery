@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { sendOtp, verifyOtp, customerRegister } from "../../services/endpoints";
+import { sendOtp, verifyOtp, sendEmailOtp, verifyEmailOtp, resendEmailOtp, customerRegister } from "../../services/endpoints";
 import { useAuth } from "../../hooks/AuthContext";
 import StateCitySelect from "../../components/StateCitySelect";
 
@@ -9,25 +9,50 @@ const emptyForm = {
   mobile_number: "", address: "", pincode: "", referral_code: "",
 };
 
+const EMAIL_OTP_COOLDOWN_SECONDS = 30;
+
 export default function CustomerRegister() {
   const [form, setForm] = useState(emptyForm);
   const [stateId, setStateId] = useState("");
   const [cityId, setCityId] = useState("");
+
+  // ---- Mobile OTP (unchanged, existing SMS-simulated flow) ----
   const [otpSent, setOtpSent] = useState(false);
   const [otpVerified, setOtpVerified] = useState(false);
   const [otpCode, setOtpCode] = useState("");
-  const [devOtp, setDevOtp] = useState("");
+
+  // ---- Email OTP (new, real email delivery) ----
+  const [emailOtpSent, setEmailOtpSent] = useState(false);
+  const [emailOtpVerified, setEmailOtpVerified] = useState(false);
+  const [emailOtpLocked, setEmailOtpLocked] = useState(false); // email field locked once an OTP has been sent to it
+  const [emailOtpCode, setEmailOtpCode] = useState("");
+  const [emailResendCooldown, setEmailResendCooldown] = useState(0);
+
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
 
+  useEffect(() => {
+    if (emailResendCooldown <= 0) return;
+    const t = setInterval(() => setEmailResendCooldown((s) => Math.max(s - 1, 0)), 1000);
+    return () => clearInterval(t);
+  }, [emailResendCooldown]);
+
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
+    // If the customer edits the email after requesting an OTP for a
+    // different address, that OTP no longer applies -- reset verification.
+    if (field === "email" && emailOtpLocked) {
+      setEmailOtpSent(false);
+      setEmailOtpVerified(false);
+      setEmailOtpLocked(false);
+      setEmailOtpCode("");
+    }
   }
 
-  async function handleSendOtp() {
+  async function handleSendMobileOtp() {
     setError(""); setInfo("");
     if (!/^[6-9]\d{9}$/.test(form.mobile_number)) {
       setError("Enter a valid 10-digit Indian mobile number.");
@@ -38,7 +63,6 @@ export default function CustomerRegister() {
       const res = await sendOtp(form.mobile_number);
       setOtpSent(true);
       if (res.data.dev_otp) {
-        setDevOtp(res.data.dev_otp);
         setInfo(`OTP sent. (Dev mode — no SMS gateway configured, your test code is ${res.data.dev_otp})`);
       } else {
         setInfo("OTP sent to your mobile number.");
@@ -50,7 +74,7 @@ export default function CustomerRegister() {
     }
   }
 
-  async function handleVerifyOtp() {
+  async function handleVerifyMobileOtp() {
     setError(""); setInfo("");
     setLoading(true);
     try {
@@ -64,11 +88,64 @@ export default function CustomerRegister() {
     }
   }
 
+  async function handleSendEmailOtp() {
+    setError(""); setInfo("");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+      setError("Enter a valid email address.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await sendEmailOtp(form.email, "REGISTRATION");
+      setEmailOtpSent(true);
+      setEmailOtpLocked(true);
+      setEmailResendCooldown(EMAIL_OTP_COOLDOWN_SECONDS);
+      setInfo(res.data.message || "OTP sent to your email. Please check your inbox and spam folder.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleResendEmailOtp() {
+    if (emailResendCooldown > 0) return;
+    setError(""); setInfo("");
+    setLoading(true);
+    try {
+      const res = await resendEmailOtp(form.email, "REGISTRATION");
+      setEmailResendCooldown(EMAIL_OTP_COOLDOWN_SECONDS);
+      setInfo(res.data.message || "OTP resent to your email.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleVerifyEmailOtp() {
+    setError(""); setInfo("");
+    setLoading(true);
+    try {
+      await verifyEmailOtp(form.email, emailOtpCode, "REGISTRATION");
+      setEmailOtpVerified(true);
+      setInfo("Email verified successfully.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
     if (!otpVerified) {
       setError("Please verify your mobile number with OTP before continuing.");
+      return;
+    }
+    if (!emailOtpVerified) {
+      setError("Please verify your email address with the OTP before continuing.");
       return;
     }
     if (form.password !== form.confirm_password) {
@@ -118,8 +195,39 @@ export default function CustomerRegister() {
 
           <div className="field">
             <label>Email Address</label>
-            <input className="input" type="email" required value={form.email} onChange={(e) => update("email", e.target.value)} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <input className="input" type="email" required value={form.email} disabled={emailOtpVerified}
+                onChange={(e) => update("email", e.target.value.trim())} />
+              <button type="button" className="btn btn-outline" disabled={loading || emailOtpVerified} onClick={handleSendEmailOtp}>
+                Send OTP
+              </button>
+            </div>
           </div>
+
+          {emailOtpSent && !emailOtpVerified && (
+            <div className="field">
+              <label>Verify OTP — sent to your email</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input className="input" value={emailOtpCode}
+                  onChange={(e) => setEmailOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="6-digit OTP" inputMode="numeric" />
+                <button type="button" className="btn btn-primary" disabled={loading || emailOtpCode.length !== 6} onClick={handleVerifyEmailOtp}>
+                  Verify OTP
+                </button>
+              </div>
+              <div style={{ marginTop: 6 }}>
+                {emailResendCooldown > 0 ? (
+                  <span className="hint">Resend OTP in {emailResendCooldown}s</span>
+                ) : (
+                  <button type="button" className="btn btn-outline" style={{ padding: "4px 12px", fontSize: 13 }}
+                    disabled={loading} onClick={handleResendEmailOtp}>
+                    Resend OTP
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          {emailOtpVerified && <div className="badge badge-approved" style={{ marginBottom: 14 }}>✓ Email Verified</div>}
 
           <div className="grid grid-2">
             <div className="field">
@@ -139,7 +247,7 @@ export default function CustomerRegister() {
               <input className="input" required value={form.mobile_number} disabled={otpVerified}
                 onChange={(e) => update("mobile_number", e.target.value.replace(/\D/g, "").slice(0, 10))}
                 placeholder="10-digit mobile number" />
-              <button type="button" className="btn btn-outline" disabled={loading || otpVerified} onClick={handleSendOtp}>
+              <button type="button" className="btn btn-outline" disabled={loading || otpVerified} onClick={handleSendMobileOtp}>
                 {otpSent ? "Resend OTP" : "Send OTP"}
               </button>
             </div>
@@ -150,7 +258,7 @@ export default function CustomerRegister() {
               <label>Enter OTP</label>
               <div style={{ display: "flex", gap: 8 }}>
                 <input className="input" value={otpCode} onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6-digit OTP" />
-                <button type="button" className="btn btn-primary" disabled={loading} onClick={handleVerifyOtp}>Verify OTP</button>
+                <button type="button" className="btn btn-primary" disabled={loading} onClick={handleVerifyMobileOtp}>Verify OTP</button>
               </div>
             </div>
           )}
