@@ -2,9 +2,7 @@ import bcrypt
 import hashlib
 import hmac
 import jwt
-import random
 import secrets
-import string
 from datetime import datetime, timedelta
 from flask import current_app
 
@@ -40,7 +38,26 @@ def decode_token(token: str):
 
 
 def generate_otp(length=6) -> str:
-    return "".join(random.choices(string.digits, k=length))
+    """
+    Cryptographically secure 6-digit numeric OTP using `secrets` (never
+    `random`), per the standard `secrets.randbelow(900000) + 100000` pattern
+    so the result is always exactly 6 digits with no leading-zero ambiguity.
+    """
+    if length != 6:
+        # Only 6-digit OTPs are used anywhere in this app; keep the function
+        # simple and explicit rather than generalizing to arbitrary lengths.
+        return "".join(str(secrets.randbelow(10)) for _ in range(length))
+    return str(secrets.randbelow(900000) + 100000)
+
+
+def hash_otp(otp: str) -> str:
+    """
+    SHA-256 hash of an OTP code, used as the stored/lookup value for
+    email-OTP rows. Only this hash is ever persisted -- the raw code exists
+    only in the email sent to the customer and briefly in memory on the
+    backend while verifying.
+    """
+    return hashlib.sha256(otp.encode("utf-8")).hexdigest()
 
 
 def generate_reset_token() -> str:
