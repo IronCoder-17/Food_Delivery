@@ -58,6 +58,11 @@ class Customer(db.Model):
     # need to supply mobile number / address / state / city (required fields
     # that Google does not provide). True for every normal registration.
     profile_completed = db.Column(db.Boolean, nullable=False, default=True)
+    # email_verified: True for Google sign-ups (Google already verified the
+    # address) and for local registrations that completed the email-OTP
+    # step at signup. Informational / gating flag only -- does not affect
+    # login for existing accounts created before this feature shipped.
+    email_verified = db.Column(db.Boolean, nullable=False, default=True)
 
     user = db.relationship("User", backref="customer_profile")
 
@@ -117,8 +122,15 @@ class Admin(db.Model):
 class OtpVerification(db.Model):
     __tablename__ = "otp_verifications"
     id = db.Column(db.Integer, primary_key=True)
-    mobile_number = db.Column(db.String(15), nullable=False)
-    otp_code = db.Column(db.String(6), nullable=False)
+    # Mobile-SMS OTP fields (existing, unchanged behavior) -- nullable now
+    # only so email-based rows (below) don't need a mobile number.
+    mobile_number = db.Column(db.String(15), nullable=True)
+    otp_code = db.Column(db.String(6), nullable=True)
+    # Email OTP fields (new). Only otp_hash is ever stored for these rows --
+    # the raw 6-digit code exists only in the email sent to the customer and
+    # briefly in memory on the backend while verifying.
+    email = db.Column(db.String(150), nullable=True, index=True)
+    otp_hash = db.Column(db.String(64), nullable=True)
     purpose = db.Column(db.String(20), default="registration")
     attempts = db.Column(db.Integer, default=0)
     is_verified = db.Column(db.Boolean, default=False)
