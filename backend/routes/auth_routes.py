@@ -9,6 +9,7 @@ from google.auth.exceptions import GoogleAuthError
 
 from backend.models.models import (
     db, User, Customer, Restaurant, Admin, Cart, Wallet, Notification, PasswordResetToken,
+    OtpVerification,
 )
 from backend.utils.auth_utils import (
     hash_password, verify_password, generate_token, generate_reset_token,
@@ -19,6 +20,7 @@ from backend.services.otp_service import send_otp, verify_otp
 from backend.services.authority_service import assign_default_authorities
 from backend.services.loyalty_service import get_or_create_loyalty
 from backend.services.email_service import send_password_reset_email
+from backend.services.email_otp_service import send_email_otp, verify_email_otp
 from backend.services import referral_service
 from backend.services import streak_service
 
@@ -81,6 +83,100 @@ def verify_otp_route():
 
 
 # ------------------------------------------------------------------
+# Email OTP endpoints (real email delivery -- registration email
+# verification + forgot-password). Distinct from the mobile-SMS endpoints
+# above; these are keyed by email address, not mobile number.
+# ------------------------------------------------------------------
+_VALID_EMAIL_OTP_PURPOSES = {"REGISTRATION", "EMAIL_VERIFICATION", "FORGOT_PASSWORD", "LOGIN"}
+
+
+@auth_bp.route("/send-otp", methods=["POST"])
+def send_email_otp_route():
+    data = request.get_json(force=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    purpose = (data.get("purpose") or "REGISTRATION").strip().upper()
+
+    if not is_valid_email(email):
+        return jsonify({"error": "Please enter a valid email address."}), 400
+    if purpose not in _VALID_EMAIL_OTP_PURPOSES:
+        return jsonify({"error": "Invalid OTP purpose."}), 400
+
+    if purpose in ("REGISTRATION", "EMAIL_VERIFICATION"):
+        # Pre-account verification: the email isn't registered yet, so
+        # there's no enumeration risk in confirming that (the existing
+        # /customer/register endpoint already reveals this at submit time).
+        if User.query.filter_by(email=email).first():
+            return jsonify({"error": "Email already registered."}), 409
+        sent, message, internal_error = send_email_otp(email, purpose)
+        if not sent:
+            current_app.logger.error("send-otp (%s) failed for %s: %s", purpose, email, internal_error)
+            return jsonify({"error": message}), 502
+        # send_email_otp()'s message is the shared, enumeration-safe string
+        # used by forgot-password; for a pre-account purpose there's no
+        # enumeration concern, so use clearer copy here instead.
+        display_message = "OTP sent to your email. Please check your inbox and spam folder."
+        return jsonify({"success": True, "message": display_message,
+                         "expires_in_minutes": current_app.config["OTP_EXPIRY_MINUTES"]}), 200
+
+    # FORGOT_PASSWORD / LOGIN: must not reveal whether the account exists.
+    return _send_forgot_password_otp(email)
+
+
+@auth_bp.route("/resend-otp", methods=["POST"])
+def resend_email_otp_route():
+    # Functionally identical to send-otp -- send_email_otp() already
+    # enforces the resend cooldown, so a second click within the window
+    # naturally gets the same "already sent" generic response.
+    return send_email_otp_route()
+
+
+@auth_bp.route("/verify-otp", methods=["POST"])
+def verify_email_otp_route():
+    data = request.get_json(force=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    code = (data.get("otp") or data.get("otp_code") or "").strip()
+    purpose = (data.get("purpose") or "REGISTRATION").strip().upper()
+
+    if not email or not code:
+        return jsonify({"error": "Email and OTP are required."}), 400
+    if purpose not in _VALID_EMAIL_OTP_PURPOSES:
+        return jsonify({"error": "Invalid OTP purpose."}), 400
+
+    ok, message = verify_email_otp(email, code, purpose)
+    if not ok:
+        return jsonify({"error": message}), 400
+
+    if purpose == "FORGOT_PASSWORD":
+        # The customer just proved they own this inbox. Issue a short-lived,
+        # single-use password-reset authorization -- the SAME hashed-token
+        # mechanism /reset-password already validates -- rather than
+        # trusting the frontend's claim that OTP verification succeeded.
+        user = User.query.filter_by(email=email).first()
+        if not user:
+            # Shouldn't happen (send_email_otp is only called for existing
+            # users on this purpose), but never hand out a token if it does.
+            return jsonify({"error": "Invalid or expired OTP."}), 400
+
+        expiry_minutes = current_app.config["OTP_RESET_TOKEN_EXPIRY_MINUTES"]
+        raw_token = generate_reset_token()
+        reset = PasswordResetToken(
+            user_id=user.id,
+            token_hash=hash_reset_token(raw_token),
+            expires_at=datetime.utcnow() + timedelta(minutes=expiry_minutes),
+            requested_ip=request.remote_addr,
+        )
+        db.session.add(reset)
+        db.session.commit()
+        return jsonify({
+            "message": message,
+            "reset_token": raw_token,
+            "expires_in_minutes": expiry_minutes,
+        }), 200
+
+    return jsonify({"message": message}), 200
+
+
+# ------------------------------------------------------------------
 # Customer registration & login
 # ------------------------------------------------------------------
 @auth_bp.route("/customer/register", methods=["POST"])
@@ -115,14 +211,24 @@ def customer_register():
         return jsonify({"error": "Mobile number already registered."}), 409
 
     # Require OTP verification to have succeeded for this mobile number
-    from backend.models.models import OtpVerification
-    verified_otp = (
+    verified_mobile_otp = (
         OtpVerification.query.filter_by(mobile_number=mobile, purpose="registration", is_verified=True)
         .order_by(OtpVerification.id.desc())
         .first()
     )
-    if not verified_otp or verified_otp.expires_at < datetime.utcnow() - timedelta(minutes=30):
+    if not verified_mobile_otp or verified_mobile_otp.expires_at < datetime.utcnow() - timedelta(minutes=30):
         return jsonify({"error": "Mobile number is not OTP-verified. Please verify OTP first."}), 400
+
+    # Require OTP verification to have succeeded for this email address too
+    # (real email OTP -- see backend/services/email_otp_service.py). Same
+    # "verified within a recent window" pattern as the mobile check above.
+    verified_email_otp = (
+        OtpVerification.query.filter_by(email=email, purpose="REGISTRATION", is_verified=True)
+        .order_by(OtpVerification.id.desc())
+        .first()
+    )
+    if not verified_email_otp or verified_email_otp.expires_at < datetime.utcnow() - timedelta(minutes=30):
+        return jsonify({"error": "Email is not OTP-verified. Please verify the OTP sent to your email first."}), 400
 
     user = User(role="customer", email=email, password_hash=hash_password(data["password"]))
     db.session.add(user)
@@ -134,6 +240,7 @@ def customer_register():
         last_name=data["last_name"].strip(),
         mobile_number=mobile,
         mobile_verified=True,
+        email_verified=True,
         state_id=data["state_id"],
         city_id=data["city_id"],
         address=data["address"],
@@ -462,12 +569,41 @@ def admin_login():
 
 
 # ------------------------------------------------------------------
-# Forgot password (works for any role, via email)
+# Forgot password (OTP-based, works for any role registered as a customer)
 # ------------------------------------------------------------------
 GENERIC_FORGOT_PASSWORD_RESPONSE = {
-    "message": "If that email is registered, a password reset link has been sent. "
-                "Please check your inbox and spam folder."
+    "message": "If an account exists with this email, an OTP has been sent."
 }
+
+
+def _send_forgot_password_otp(email: str):
+    """
+    Shared by /forgot-password and /send-otp (purpose=FORGOT_PASSWORD).
+    Always returns the same generic response whether or not the email is
+    registered, so this endpoint can't be used to enumerate accounts.
+    """
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify(GENERIC_FORGOT_PASSWORD_RESPONSE), 200
+
+    # Google-only customers have no password of their own to reset. Return
+    # the same generic response (so this can't reveal how the account
+    # authenticates) but skip sending anything -- Google Sign-In remains
+    # their only login method.
+    customer = Customer.query.filter_by(user_id=user.id).first()
+    if customer and customer.auth_provider == "google":
+        current_app.logger.info(
+            "Password reset OTP requested for Google-only account user_id=%s -- no email sent.",
+            user.id,
+        )
+        return jsonify(GENERIC_FORGOT_PASSWORD_RESPONSE), 200
+
+    sent, message, internal_error = send_email_otp(email, "FORGOT_PASSWORD")
+    if not sent:
+        current_app.logger.error("forgot-password OTP send failed for user_id=%s: %s", user.id, internal_error)
+        return jsonify({"error": message}), 502
+
+    return jsonify(GENERIC_FORGOT_PASSWORD_RESPONSE), 200
 
 
 @auth_bp.route("/forgot-password", methods=["POST"])
@@ -480,68 +616,7 @@ def forgot_password():
         # that the address is (or isn't) registered.
         return jsonify({"error": "Please enter a valid email address."}), 400
 
-    # Always return the same generic response whether or not the email is
-    # registered, so the endpoint can't be used to enumerate accounts.
-    user = User.query.filter_by(email=email).first()
-    if not user:
-        return jsonify(GENERIC_FORGOT_PASSWORD_RESPONSE), 200
-
-    # Google-only customers have no password of their own to reset. We still
-    # return the generic response (so this endpoint can't reveal that the
-    # account exists or how it authenticates) but skip issuing a token or
-    # sending anything, leaving Google Sign-In as their only login method.
-    customer = Customer.query.filter_by(user_id=user.id).first()
-    if customer and customer.auth_provider == "google":
-        current_app.logger.info(
-            "Password reset requested for Google-only account user_id=%s -- no email sent.",
-            user.id,
-        )
-        return jsonify(GENERIC_FORGOT_PASSWORD_RESPONSE), 200
-
-    # ---- Backend-enforced cooldown, independent of the frontend ----
-    cooldown_seconds = current_app.config["PASSWORD_RESET_COOLDOWN_SECONDS"]
-    recent_cutoff = datetime.utcnow() - timedelta(seconds=cooldown_seconds)
-    recent_request = (
-        PasswordResetToken.query.filter_by(user_id=user.id)
-        .filter(PasswordResetToken.created_at >= recent_cutoff)
-        .order_by(PasswordResetToken.created_at.desc())
-        .first()
-    )
-    if recent_request:
-        # Don't send another email yet, but still return the same generic
-        # response -- the customer already has a valid link in their inbox.
-        return jsonify(GENERIC_FORGOT_PASSWORD_RESPONSE), 200
-
-    expiry_minutes = current_app.config["PASSWORD_RESET_TOKEN_EXPIRY_MINUTES"]
-    raw_token = generate_reset_token()
-    reset = PasswordResetToken(
-        user_id=user.id,
-        token_hash=hash_reset_token(raw_token),
-        expires_at=datetime.utcnow() + timedelta(minutes=expiry_minutes),
-        requested_ip=request.remote_addr,
-    )
-    db.session.add(reset)
-    db.session.commit()
-
-    reset_url = f"{current_app.config['FRONTEND_URL']}/reset-password?token={raw_token}"
-    customer_name = customer.first_name if customer else ""
-
-    sent, _internal_error = send_password_reset_email(
-        to_email=email,
-        customer_name=customer_name,
-        reset_url=reset_url,
-        expires_minutes=expiry_minutes,
-    )
-    if not sent:
-        # Sending failed -- don't leave a "valid-looking" but never-emailed
-        # token in the database, and don't tell the customer their reset
-        # succeeded when it didn't. The detailed reason was already logged
-        # by email_service; the customer only ever sees a safe generic error.
-        db.session.delete(reset)
-        db.session.commit()
-        return jsonify({"error": "We couldn't send the reset email right now. Please try again shortly."}), 502
-
-    return jsonify(GENERIC_FORGOT_PASSWORD_RESPONSE), 200
+    return _send_forgot_password_otp(email)
 
 
 @auth_bp.route("/reset-password", methods=["POST"])
