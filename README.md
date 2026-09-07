@@ -75,12 +75,12 @@ food-delivery-app/
 │       └── hooks/               Auth, Cart, Theme, Authority React contexts
 ├── database/
 │   ├── schema.sql           Full normalized MySQL schema (base tables)
-│   ├── migrations/          13 incremental migrations layering on later features:
+│   ├── migrations/          14 incremental migrations layering on later features:
 │   │                        addresses/favorites/reviews, combos/flash sales/inventory,
 │   │                        meal planner, group ordering, referrals, order tracking,
 │   │                        passes/subscriptions/sponsored listings, order location,
 │   │                        fraud/promotions/disputes, Google OAuth, two feature batches,
-│   │                        and hashed password-reset tokens for real email delivery
+│   │                        hashed password-reset tokens, and real email OTP support
 │   └── seed.sql              States/cities/categories/GK questions (restaurants/foods/admin are
 │                              seeded via seed_runner.py so passwords are hashed correctly)
 └── README.md                 (this file)
@@ -117,7 +117,8 @@ cp .env.example .env
 #   AI_API_KEY / AI_MODEL / AI_BASE_URL        (AI assistant & recipe-to-order)
 #   MAIL_HOST / MAIL_PORT / MAIL_USERNAME /
 #   MAIL_PASSWORD / MAIL_FROM_EMAIL / MAIL_FROM_NAME,
-#   FRONTEND_URL, EMAIL_ENABLED=1              (real password-reset emails — see section 7)
+#   FRONTEND_URL, EMAIL_ENABLED=1              (real registration + forgot-password email OTP —
+#                                                see section 7 "Real Email OTP Setup")
 ```
 
 If no `DB_HOST`/`DB_USER` are set, the app falls back to a local SQLite file
@@ -231,21 +232,23 @@ returned directly in the API response (`dev_otp` field) and shown in the UI so y
 full registration flow without a real SMS provider. **Before going live**, wire a real provider
 (Twilio, MSG91, etc.) into `backend/services/otp_service.py` and set `OTP_DEBUG_MODE=0`.
 
-### Password reset emails
-Real email is sent from the backend over SMTP (`backend/services/email_service.py`) — nothing is
-ever sent from React. By default `EMAIL_ENABLED=0`, so the backend logs what it *would* have sent
-instead of making a real SMTP connection, letting you exercise the whole flow without any mail
-credentials. Set `EMAIL_ENABLED=1` and fill in the `MAIL_*` variables below to send real emails.
+### Real Email OTP Setup (registration + forgot password)
+Registration email verification and Forgot Password both use a **real 6-digit email OTP**, sent
+from the backend over SMTP (`backend/services/email_otp_service.py` + `email_service.py`) — nothing
+is ever sent from React, and the OTP is never returned by the API or logged once real email is
+enabled. By default `EMAIL_ENABLED=0`, so the backend logs what it *would* have sent instead of
+making a real SMTP connection, letting you exercise the whole flow without any mail credentials.
 
 **Setting up Gmail SMTP (recommended for testing/small deployments):**
 
-1. Turn on **2-Step Verification** on the Google account you want to send from:
+1. Create or use a Gmail account for the application.
+2. Turn on **2-Step Verification** on that Google account:
    [myaccount.google.com/security](https://myaccount.google.com/security).
-2. Once 2-Step Verification is on, go to
+3. Once 2-Step Verification is on, go to
    [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) and create an
    **App Password** (choose "Mail" / "Other", give it a name like "QuickBite backend"). Google
    gives you a 16-character code — copy it.
-3. In `backend/.env`, set:
+4. Put the App Password into `MAIL_PASSWORD` in `backend/.env`, and fill in the rest:
    ```
    MAIL_HOST=smtp.gmail.com
    MAIL_PORT=587
@@ -253,41 +256,58 @@ credentials. Set `EMAIL_ENABLED=1` and fill in the `MAIL_*` variables below to s
    MAIL_PASSWORD=the-16-character-app-password   # NOT your normal Gmail password
    MAIL_FROM_EMAIL=your-email@gmail.com
    MAIL_FROM_NAME=QuickBite
-   MAIL_USE_TLS=1
-   MAIL_USE_SSL=0
-   FRONTEND_URL=http://localhost:5173
+
+   OTP_EXPIRY_MINUTES=5
+   OTP_MAX_ATTEMPTS=5
+   OTP_RESEND_COOLDOWN=30
+   OTP_DEBUG_MODE=0        # recommended for production; see note below
+
    EMAIL_ENABLED=1
+   FRONTEND_URL=http://localhost:5173
    ```
-4. Never commit `backend/.env`, never put the App Password in `frontend/.env` or any Vite
-   (`VITE_*`) variable, and never push it to GitHub. Only the Flask backend reads `MAIL_PASSWORD`.
+5. Never commit `backend/.env`, never put the App Password (or any `MAIL_*` value) in
+   `frontend/.env` or any Vite (`VITE_*`) variable, and never push it to GitHub. Only the Flask
+   backend ever reads `MAIL_PASSWORD`.
+6. Start the backend (`python app.py`) and frontend (`npm run dev`).
+7. Test registration: `/register` → fill in the form → **Send OTP** next to Email Address → check
+   your inbox/spam folder → enter the code → **Verify OTP** (turns into "✓ Email Verified") →
+   complete mobile OTP the same way → **Create Account**.
+8. Test Forgot Password: `/login` → **Forgot password?** → enter a real, registered email →
+   **Send OTP** → check inbox/spam → enter the 6-digit code → **Verify OTP** → set a new password →
+   confirm you're redirected to `/login` → log in with the new password.
 
 Any other SMTP provider (SendGrid, Mailgun, Amazon SES, your company mail server, etc.) works the
 same way — just point `MAIL_HOST` / `MAIL_PORT` at it and use its own username/password.
 
-**Testing the flow end-to-end:**
-1. `python app.py` (backend) and `npm run dev` (frontend).
-2. Go to `/login` → **Forgot password?** → enter a real, registered customer email → **Send Reset
-   Link**.
-3. Check that inbox (and spam folder) for an email from `MAIL_FROM_NAME`.
-4. Click **Reset Password** in the email — it opens `/reset-password?token=...` in the app.
-5. Enter and confirm a new password, submit, and confirm you're redirected to `/login`.
-6. Log in with the new password.
+**`OTP_DEBUG_MODE`** only affects the *mobile*-SMS OTP endpoints (`/api/auth/otp/send` /
+`/otp/verify`), which still have no real SMS gateway wired in — it controls whether `dev_otp` is
+returned so you can test mobile verification locally. It has no effect on the email-OTP endpoints:
+those never return the code in the response body regardless of this setting, once `EMAIL_ENABLED=1`
+they always attempt a real send. Set `OTP_DEBUG_MODE=0` for production once you've wired a real SMS
+provider (or if you don't need mobile verification testing locally).
 
-Also worth testing manually: an unregistered email (should get the same generic "if that email is
-registered…" message), submitting the same email twice quickly (second request is silently
-throttled by `PASSWORD_RESET_COOLDOWN_SECONDS`), an expired or already-used token, a Google-only
-customer account (no email is sent — they keep using "Continue with Google"), and turning off wifi
-to confirm SMTP failures return a generic error instead of a stack trace.
+Also worth testing manually: a wrong OTP (attempt counter increments, error shown), waiting past
+`OTP_EXPIRY_MINUTES` before submitting (rejected as expired), 5 wrong attempts in a row (locked out,
+must request a new OTP), clicking Resend before the `OTP_RESEND_COOLDOWN` timer runs out (blocked
+client-side and enforced again on the backend), an unregistered email on Forgot Password (same
+generic "if an account exists…" message either way), and a Google-only customer account on Forgot
+Password (no email is sent — they keep using "Continue with Google").
 
-Reset tokens are never stored raw — only a SHA-256 hash is kept in `password_reset_tokens.token_hash`
-— are single-use, expire after `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES` (default 30), and are never
-logged or returned by the API once `EMAIL_ENABLED=1`.
+Email OTPs are never stored raw — only a SHA-256 hash is kept in `otp_verifications.otp_hash` — are
+single-use, purpose-scoped (`REGISTRATION` vs `FORGOT_PASSWORD`), and only the newest OTP for a
+given email+purpose is ever valid (requesting a new one invalidates any still-open previous code).
+On successful Forgot-Password OTP verification, the backend issues a short-lived, single-use
+password-reset authorization token (same hashed-token mechanism as `password_reset_tokens`,
+`OTP_RESET_TOKEN_EXPIRY_MINUTES`, default 10) — the frontend never asserts "OTP verified" on its
+own; `/reset-password` re-validates that token server-side before changing anything.
 
 ### Google Sign-In
 Set the **same** `GOOGLE_CLIENT_ID` in both `backend/.env` and `frontend/.env`
 (`VITE_GOOGLE_CLIENT_ID`). The Client Secret is never needed by this app — only the public Client
 ID, used server-side to verify the token's audience. Leave it blank to keep the "Continue with
-Google" button hidden.
+Google" button hidden. Google Sign-In is unaffected by the email-OTP system above: Google already
+verifies the customer's email address, so Google-registered customers are created with
+`email_verified=True` and never see an OTP step.
 
 ### Razorpay
 The backend creates orders and verifies payment signatures server-side
