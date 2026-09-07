@@ -109,7 +109,9 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: str) -> t
 
 
 def send_password_reset_email(*, to_email: str, customer_name: str, reset_url: str, expires_minutes: int) -> tuple[bool, str | None]:
-    """Builds and sends the password-reset email. See email_templates.py for markup."""
+    """Builds and sends the password-reset (link-based) email. Kept for
+    backward compatibility / possible future use -- the current
+    forgot-password flow uses send_otp_email() below instead."""
     from backend.services.email_templates import render_password_reset_email
 
     html_body, text_body = render_password_reset_email(
@@ -120,6 +122,25 @@ def send_password_reset_email(*, to_email: str, customer_name: str, reset_url: s
     return send_email(
         to_email=to_email,
         subject="Reset your QuickBite password",
+        html_body=html_body,
+        text_body=text_body,
+    )
+
+
+def send_otp_email(to_email: str, otp: str, purpose: str, expires_minutes: int) -> tuple[bool, str | None]:
+    """
+    Builds and sends a one-time-password email for the given purpose
+    (REGISTRATION, FORGOT_PASSWORD, LOGIN, EMAIL_VERIFICATION). The raw OTP
+    is only ever passed in here and to the recipient's inbox -- callers
+    must never log it or return it in an API response when EMAIL_ENABLED=1.
+    """
+    from backend.services.email_templates import render_otp_email, PURPOSE_HEADINGS
+
+    html_body, text_body = render_otp_email(otp=otp, purpose=purpose, expires_minutes=expires_minutes)
+    subject = f"Your QuickBite {PURPOSE_HEADINGS.get(purpose, 'verification code')}"
+    return send_email(
+        to_email=to_email,
+        subject=subject,
         html_body=html_body,
         text_body=text_body,
     )
