@@ -1,4 +1,3 @@
-<img width="5796" height="5520" alt="Architecture" src="https://github.com/user-attachments/assets/078bb840-190b-42d9-9abd-611e422f8537" />
 # Quickbite — Full-Stack Food Delivery Web Application
 
 A full-stack food delivery platform with three separate portals — **Customer**, **Restaurant**,
@@ -6,6 +5,9 @@ and **Admin** — built with **React (Vite)** on the frontend, **Python/Flask** 
 **MySQL** for storage. It goes well beyond a basic ordering flow: loyalty & referrals, group
 ordering, meal planning, subscriptions, flash sales, surplus deals, fraud detection, disputes,
 and more are all included.
+
+# Architecture of Food Delivery 
+<img width="5796" height="5520" alt="Architecture" src="https://github.com/user-attachments/assets/078bb840-190b-42d9-9abd-611e422f8537" />
 
 ---
 
