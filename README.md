@@ -1,3 +1,4 @@
+<img width="5796" height="5520" alt="Architecture" src="https://github.com/user-attachments/assets/078bb840-190b-42d9-9abd-611e422f8537" />
 # Quickbite — Full-Stack Food Delivery Web Application
 
 A full-stack food delivery platform with three separate portals — **Customer**, **Restaurant**,
